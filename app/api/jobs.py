@@ -6,23 +6,43 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.models import Job, JobInput, JobResponse, JobCreateResponse, JobStatus
 from app.storage.job_store import JobStore, get_job_store
+from app.storage.task_store import TaskStore, get_task_store
+from app.services.job_processor import JobProcessor
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
-@router.post("", response_model=JobCreateResponse, status_code=201)
+def get_processor(
+    job_store: JobStore = Depends(get_job_store),
+    task_store: TaskStore = Depends(get_task_store),
+) -> JobProcessor:
+    """Dependency for job processor."""
+    return JobProcessor(job_store, task_store)
+
+
+@router.post("", response_model=JobResponse, status_code=201)
 async def create_job(
     job_input: JobInput,
     store: JobStore = Depends(get_job_store),
-) -> JobCreateResponse:
-    """Submit a new job for processing."""
+    processor: JobProcessor = Depends(get_processor),
+) -> JobResponse:
+    """Submit a new job for processing. Runs the full pipeline synchronously."""
+    # Create the job
     job = Job(input_data=job_input.data)
     store.create(job)
     
-    return JobCreateResponse(
+    # Process the job through the full pipeline
+    processor.process(job.id)
+    
+    # Get updated job with result
+    job = store.get(job.id)
+    
+    return JobResponse(
         id=job.id,
         status=job.status,
-        message="Job created successfully"
+        created_at=job.created_at,
+        input_data=job.input_data,
+        result=job.result,
     )
 
 

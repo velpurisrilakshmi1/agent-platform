@@ -1,11 +1,14 @@
 """Worker agent for executing tasks."""
 
+import logging
 from typing import Any
 
 from app.models import Task, TaskResult, TaskStatus, TaskType
 from app.storage.task_store import TaskStore
 from app.services.mcp_client import get_mcp_client
 from app.services.rai import get_rai_service
+
+logger = logging.getLogger(__name__)
 
 
 class WorkerAgent:
@@ -22,6 +25,8 @@ class WorkerAgent:
         
         Routes to the appropriate handler based on task type.
         """
+        logger.info(f"Executing task {task.id} (type: {task.type.value})")
+        
         # Update task status to running
         self.task_store.update_task_status(task.id, TaskStatus.RUNNING)
         
@@ -43,9 +48,11 @@ class WorkerAgent:
             
             # Update task with result
             if result.success:
+                logger.info(f"Task {task.id} completed successfully")
                 task.status = TaskStatus.COMPLETED
                 task.output = result.output
             else:
+                logger.error(f"Task {task.id} failed: {result.error}")
                 task.status = TaskStatus.FAILED
                 task.error = result.error
             
@@ -53,7 +60,7 @@ class WorkerAgent:
             return result
             
         except Exception as e:
-            # Handle unexpected errors
+            logger.exception(f"Task {task.id} raised exception: {e}")
             result = TaskResult(
                 task_id=task.id,
                 success=False,
@@ -131,17 +138,22 @@ class WorkerAgent:
     
     def _handle_validate(self, task: Task) -> TaskResult:
         """
-        Validate the processed output.
+        Validate the processed output using RAI service.
         
-        MVP: Returns mock validation result.
-        Later: Will call RAI service.
+        Uses rule-based validation to check:
+        - Output is not empty
+        - No blocked patterns
+        - Length within bounds
         """
         processed = self._context.get("processed", {})
         
-        # Mock validation (always passes for now)
+        # Use RAI service for validation
+        rai_service = get_rai_service()
+        validation_result = rai_service.validate(processed)
+        
         validation = {
-            "validated": True,
-            "validation_notes": "Mock validation passed",
+            "validated": validation_result.is_valid,
+            "validation_notes": validation_result.notes_str,
             "final_output": processed.get("result", ""),
         }
         
@@ -149,7 +161,7 @@ class WorkerAgent:
         
         return TaskResult(
             task_id=task.id,
-            success=True,
+            success=True,  # Task succeeded even if validation failed
             output=validation
         )
     
